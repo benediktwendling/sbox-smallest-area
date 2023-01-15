@@ -1,0 +1,5 @@
+g++ -o sample main.cpp /opt/homebrew/Cellar/stp/2.3.3_4/lib/libstp.dylib -I /opt/homebrew/Cellar/stp/2.3.3_4/include
+./sample
+COUNTEREXAMPLE BEGIN: 
+COUNTEREXAMPLE END: 
+counter_a: 124/124
