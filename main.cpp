@@ -25,18 +25,62 @@ using namespace std;
 #define MOAI1 6
 #define MAOI1 8
 
+/* B parameter type map */
+#define B_8_NOT 3     // 0 0 0 0 0 0 1 1
+#define B_8_XOR 4     // 0 0 0 0 0 1 0 0
+#define B_8_XNOR 5    // 0 0 0 0 0 1 0 1
+#define B_8_NOT2 7    // 0 0 0 0 0 1 1 1
+#define B_8_AND 8     // 0 0 0 0 1 0 0 0
+#define B_8_NAND 9    // 0 0 0 0 1 0 0 1
+#define B_8_OR 12     // 0 0 0 0 1 1 0 0
+#define B_8_NOR 13    // 0 0 0 0 1 1 0 1
+#define B_8_AND3 64   // 0 1 0 0 0 0 0 0
+#define B_8_NAND3 65  // 0 1 0 0 0 0 0 1
+#define B_8_OR3 96    // 0 1 1 0 0 0 0 0
+#define B_8_NOR3 97   // 0 1 1 0 0 0 0 1
+#define B_8_XOR3 16   // 0 0 0 1 0 0 0 0
+#define B_8_XNOR3 17  // 0 0 0 1 0 0 0 1
+#define B_8_MAOI1 128 // 1 0 0 0 0 0 0 0
+#define B_8_MOAI1 129 // 1 0 0 0 0 0 0 1
+
 /* Other parameter */
-#define N 3     // N-bit x N-bit S-box
-#define Q_MAX 4 // Max inputs per gate, currently needs to be 4
-#define NUMBER_B 8
+#define N 3        // N-bit x N-bit S-box
+#define Q_MAX 4    // Max inputs per gate, currently needs to be 4
+#define NUMBER_B 8 // MIN 2
 
 /* Variables */
 int costs[16];
 VC vc;
 
+/* Structs */
+struct SearchResult
+{
+    int K;
+    double G;
+};
+
 /* --------------------------------------------------------------------------------------------- */
 
-int Algorithm1(int K, int G, int *sbox)
+void InitializeCostsArray()
+{
+    costs[0] = NOT;
+    costs[1] = XOR;
+    costs[2] = XNOR;
+    costs[3] = AND;
+    costs[4] = NAND;
+    costs[5] = OR;
+    costs[6] = NOR;
+    costs[7] = NAND3;
+    costs[8] = AND3;
+    costs[9] = NOR3;
+    costs[10] = OR3;
+    costs[11] = XNOR3;
+    costs[12] = XOR3;
+    costs[13] = MOAI1;
+    costs[14] = MAOI1;
+}
+
+int Algorithm1(int K, int G, int *sbox, bool printAsserts = false, bool printVarDeclarations = false)
 {
 
     int num_q = Q_MAX * K * pow(2, N);
@@ -45,7 +89,7 @@ int Algorithm1(int K, int G, int *sbox)
     // int num_a = pow(2, N) * (K * Q_MAX * (N + K / 2) - 1) + N * N + N * K;
     int num_a = (int)Q_MAX * (N + N + K - 1) * ((double)K / 2) // Number of connections between inputs and outputs of the logic gates and the s-box
                 + N * N + N * K;                               // Number of connections betweens inputs and outputs of the s-box and the logic gates
-    int num_b = 8 * K;
+    int num_b = NUMBER_B * K;
 
     int num_combinations = pow(2, N);
 
@@ -55,6 +99,8 @@ int Algorithm1(int K, int G, int *sbox)
     Expr q_bv[num_q];
     Expr a_bv[num_a];
     Expr b_bv[num_b];
+    Expr C_bv[K];
+    Expr gec_bv;
 
     Expr zero = vc_bvConstExprFromInt(vc, 1, 0);
     Expr one = vc_bvConstExprFromInt(vc, 1, 1);
@@ -98,6 +144,14 @@ int Algorithm1(int K, int G, int *sbox)
         string var_b_name = "b" + to_string(i);
         b_bv[i] = vc_varExpr(vc, var_b_name.c_str(), type_bit);
     }
+
+    // C (costs)
+    for (int i = 0; i < K; ++i)
+    {
+        string var_C_name = "C" + to_string(i);
+        C_bv[i] = vc_varExpr(vc, var_C_name.c_str(), vc_bvType(vc, 8));
+    }
+    gec_bv = vc_varExpr(vc, "GEC", vc_bvType(vc, 8));
 
     /* --------------------------------------------------------------------------------------------- */
     /* Initialize vc S-box */
@@ -415,59 +469,93 @@ int Algorithm1(int K, int G, int *sbox)
     /* --------------------------------------------------------------------------------------------- */
     /* Costs */
     // Map combination of b to costs, sum it up and then check if lower than given gec
-    // TODO
+    for (int i = 0; i < K; ++i)
+    {
+        Expr b_conc;
+        for (int j = NUMBER_B - 2; j >= 0; --j)
+        {
+            if (j == NUMBER_B - 2)
+            {
+                b_conc = vc_bvConcatExpr(vc, b_bv[i * NUMBER_B + j], b_bv[i * NUMBER_B + j + 1]);
+            }
+            else
+            {
+                b_conc = vc_bvConcatExpr(vc, b_bv[i * NUMBER_B + j], b_conc);
+            }
+        }
 
-    // vc_printAsserts(vc);
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_NOT)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, NOT))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_XOR)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, XOR))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_XNOR)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, XNOR))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_NOT2)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, NOT))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_AND)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, AND))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_NAND)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, NAND))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_OR)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, OR))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_NOR)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, NOR))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_AND3)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, AND3))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_NAND3)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, NAND3))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_OR3)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, OR3))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_NOR3)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, NOR3))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_XOR3)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, XOR3))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_XNOR3)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, XNOR3))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_MAOI1)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, MAOI1))));
+        vc_assertFormula(vc, vc_impliesExpr(vc, vc_eqExpr(vc, b_conc, vc_bvConstExprFromInt(vc, 8, B_8_MOAI1)), vc_eqExpr(vc, C_bv[i], vc_bvConstExprFromInt(vc, 8, MOAI1))));
+
+        vc_assertFormula(vc, vc_eqExpr(vc, gec_bv, vc_bvPlusExprN(vc, 8, C_bv, K)));
+
+        vc_assertFormula(vc, vc_bvLeExpr(vc, gec_bv, vc_bvConstExprFromInt(vc, 8, G)));
+    }
+
+    if (printVarDeclarations)
+    {
+        vc_printVarDecls(vc);
+    }
+
+    if (printAsserts)
+    {
+        vc_printAsserts(vc);
+    }
 
     int result = vc_query(vc, vc_falseExpr(vc));
 
-    // assert(result == FALSE);
-
     vc_printCounterExample(vc);
 
-    cout << "counter_a: " << counter_a << "/" << num_a << endl;
-
-    return 0;
+    return result;
 }
 
-void InitializeCostsArray()
+SearchResult Algorithm2(int K_low, int G_up, int *sbox)
 {
-    costs[0] = NOT;
-    costs[1] = XOR;
-    costs[2] = XNOR;
-    costs[3] = AND;
-    costs[4] = NAND;
-    costs[5] = OR;
-    costs[6] = NOR;
-    costs[7] = NAND3;
-    costs[8] = AND3;
-    costs[9] = NOR3;
-    costs[10] = OR3;
-    costs[11] = XNOR3;
-    costs[12] = XOR3;
-    costs[13] = MOAI1;
-    costs[14] = MAOI1;
-}
+    int K_up = G_up;
+    int G_low = K_low;
 
-void ValidityCheckerSample()
-{
-    // 1 bit variables a,b
-    Expr a = vc_varExpr(vc, "a", vc_bvType(vc, 1));
-    Expr b = vc_varExpr(vc, "b", vc_bvType(vc, 1));
+    int K_opt = K_low;
+    int G_opt = G_up;
 
-    // a OR b = 1
-    Expr xp1 = vc_bvOrExpr(vc, a, b);
-    Expr xp2 = vc_bvConstExprFromInt(vc, 1, 1);
-    Expr eq = vc_eqExpr(vc, xp1, xp2);
+    for (int K = K_low; K <= ((double)K_up / 3); ++K)
+    {
+        for (int G = G_up; G >= G_low; --G)
+        {
+            cout << "Call Algorithm1 for K = " << K << " and G = " << (double)G / 3 << "..." << endl;
+            if (Algorithm1(K, G, sbox) == 0)
+            {
+                G_up = G;
+                K_up = G;
 
-    // Is a OR b = 1 always correct?
-    int ret = vc_query(vc, eq);
+                G_opt = G;
+                K_opt = K;
+            }
+            else
+            {
 
-    // No, a = b = 0 is a counterexample
-    assert(ret == true);
+                break;
+            }
+        }
+    }
 
-    // print c = 11 counterexample
-    vc_printCounterExample(vc);
+    SearchResult result = {K_opt,
+                           (double)G_opt / 3.00};
+
+    return result;
 }
 
 int main()
@@ -480,15 +568,19 @@ int main()
 
     InitializeCostsArray();
 
-    // int sbox[N * N] = {
-    //     2,
-    //     3,
-    //     3,
-    //     1};
+    // int sbox[N * N] = {2, 3, 3, 1};                      // 2x2
+    // int res = Algorithm1(2, 7, sbox, false, false);
+    // SearchResult result = Algorithm2(2, 7, sbox);
+    // cout << "K_opt: " << result.K << endl;
+    // cout << "G_opt: " << result.G << endl;
 
-    int sbox[N * N] = {7, 4, 3, 2, 0, 1, 5, 6};
 
-    Algorithm1(5, 20, sbox);
+    int sbox[N * N] = {7, 4, 3, 2, 0, 1, 5, 6};          // 3x3
+    int K = 6, G = 17;
+    // int res = Algorithm1(K, 3 * G, sbox, false, false);
+    SearchResult result = Algorithm2(K, 3 * G, sbox);
+    cout << "K_opt: " << result.K << endl;
+    cout << "G_opt: " << result.G << endl;
 
     // Delete validity checker
     vc_Destroy(vc);
